@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -226,6 +226,30 @@ a:hover{color:#79c0ff;text-decoration:underline}
   .cat-bar-wrap{width:50px}
 }
 
+/* New Features CSS */
+.flag-btn {
+  background:transparent;border:none;font-size:1.1rem;cursor:pointer;
+  opacity:0.3;transition:var(--transition);padding:0 4px;
+  filter:grayscale(100%);
+}
+.flag-btn:hover { opacity:0.8;filter:grayscale(50%);transform:scale(1.1); }
+.flag-btn.active { opacity:1;filter:grayscale(0%);text-shadow:0 0 8px rgba(210,153,34,0.6); }
+.problem.flagged { border-left:3px solid var(--orange);padding-left:15px;background:var(--orange-dim); }
+
+.diff-filters { display:flex;gap:8px;margin-top:12px; }
+.btn-filter { opacity:0.5;border-color:transparent; }
+.btn-filter.active { opacity:1; }
+.btn-filter[data-diff="easy"].active { border-color:var(--green);color:var(--green);background:var(--green-dim); }
+.btn-filter[data-diff="medium"].active { border-color:var(--orange);color:var(--orange);background:var(--orange-dim); }
+.btn-filter[data-diff="hard"].active { border-color:var(--red);color:var(--red);background:var(--red-dim); }
+
+@keyframes flashRow {
+  0% { background:transparent; }
+  20% { background:rgba(31,111,235,0.4);transform:scale(1.02); }
+  100% { background:transparent;transform:scale(1); }
+}
+.problem.highlight { animation:flashRow 2s ease-out; }
+
 /* Animations */
 @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
 .category{animation:fadeIn .3s ease both}
@@ -238,11 +262,17 @@ a:hover{color:#79c0ff;text-decoration:underline}
     <h1>&#x1F4BB; LeetCode Progress Tracker</h1>
     <div class="header-subtitle">41 Patterns &bull; 820 Problems &bull; All Free</div>
     <div class="header-actions">
-      <input type="text" class="search-box" id="search" placeholder="&#128269; Search problems..." autocomplete="off">
+      <input type="text" class="search-box" id="search" placeholder="&#128269; Search problems... (/ to focus)" autocomplete="off">
       <button class="btn" id="expandAll" onclick="toggleAll(true)">&#x25BC; Expand All</button>
       <button class="btn" id="collapseAll" onclick="toggleAll(false)">&#x25B2; Collapse All</button>
+      <button class="btn btn-accent" id="randomBtn" onclick="pickRandom()">&#127922; Random Unsolved</button>
       <button class="btn btn-accent" id="shareBtn" onclick="shareProgress()">&#x1F517; Share Progress</button>
       <button class="btn btn-danger" id="resetBtn" onclick="confirmReset()">&#x1F5D1; Reset All</button>
+    </div>
+    <div class="diff-filters">
+      <button class="btn btn-filter active" data-diff="easy" onclick="toggleFilter('easy')">Easy</button>
+      <button class="btn btn-filter active" data-diff="medium" onclick="toggleFilter('medium')">Medium</button>
+      <button class="btn btn-filter active" data-diff="hard" onclick="toggleFilter('hard')">Hard</button>
     </div>
   </div>
 </header>
@@ -1187,28 +1217,44 @@ const DATA = [
   ]},
 ];
 
-// State
 const KEY = 'lc_progress_v2';
+const FLAG_KEY = 'lc_flagged_v2';
 let solved = {};
+let flagged = {};
+let diffFilters = { easy: true, medium: true, hard: true };
 
-// Init
 function init() {
   loadProgress();
   renderCategories();
   updateGlobalProgress();
   loadFromHash();
-  document.getElementById('search').addEventListener('input', handleSearch);
+  document.getElementById('search').addEventListener('input', applyFilters);
   window.addEventListener('scroll', () => {
     document.getElementById('scrollTop').classList.toggle('show', window.scrollY > 400);
+  });
+  
+  // Keyboard Navigation
+  document.addEventListener('keydown', (e) => {
+    if (e.key === '/' && document.activeElement.tagName !== 'INPUT') {
+      e.preventDefault();
+      document.getElementById('search').focus();
+    } else if (e.key === 'Escape' && document.activeElement.id === 'search') {
+      const searchBox = document.getElementById('search');
+      searchBox.value = '';
+      searchBox.blur();
+      applyFilters();
+    }
   });
 }
 
 function loadProgress() {
   try { solved = JSON.parse(localStorage.getItem(KEY)) || {}; } catch(e) { solved = {}; }
+  try { flagged = JSON.parse(localStorage.getItem(FLAG_KEY)) || {}; } catch(e) { flagged = {}; }
 }
 
 function saveProgress() {
   localStorage.setItem(KEY, JSON.stringify(solved));
+  localStorage.setItem(FLAG_KEY, JSON.stringify(flagged));
 }
 
 function getProblemKey(catId, url) { return catId + '::' + url; }
@@ -1241,9 +1287,11 @@ function renderCategories() {
           const key = getProblemKey(cat.id, p.url);
           const checked = solved[key] ? ' checked' : '';
           const solvedClass = solved[key] ? ' solved' : '';
+          const flagClass = flagged[key] ? ' flagged' : '';
           const dl = p.d.toLowerCase();
-          return '<div class="problem' + solvedClass + '" data-key="' + key + '" data-name="' + escAttr(p.name) + '">' +
+          return '<div class="problem' + solvedClass + flagClass + '" data-key="' + key + '" data-name="' + escAttr(p.name) + '" data-diff="' + dl + '">' +
             '<input type="checkbox" class="problem-check"' + checked + ' onchange="toggleProblem(\'' + escJs(key) + '\',this.checked,' + cat.id + ')">' +
+            '<button class="flag-btn' + (flagged[key] ? ' active' : '') + '" onclick="toggleFlag(\'' + escJs(key) + '\')" title="Review Later">&#11088;</button>' +
             '<div class="problem-name"><a href="' + p.url + '" target="_blank" rel="noopener">' + escHtml(p.name) + '</a></div>' +
             '<span class="diff-badge ' + dl + '">' + p.d + '</span>' +
           '</div>';
@@ -1277,6 +1325,17 @@ function toggleProblem(key, checked, catId) {
   if (prob) prob.classList.toggle('solved', checked);
   updateCategoryProgress(catId);
   updateGlobalProgress();
+}
+
+function toggleFlag(key) {
+  if (flagged[key]) delete flagged[key]; else flagged[key] = true;
+  saveProgress();
+  const prob = document.querySelector('[data-key="' + key + '"]');
+  if (prob) {
+    prob.classList.toggle('flagged', !!flagged[key]);
+    const btn = prob.querySelector('.flag-btn');
+    if (btn) btn.classList.toggle('active', !!flagged[key]);
+  }
 }
 
 function updateCategoryProgress(catId) {
@@ -1319,21 +1378,52 @@ function updateGlobalProgress() {
     '<div class="diff-stat"><span class="diff-dot hard"></span> Hard ' + hardS + '/' + hard + '</div>';
 }
 
-// Search
-function handleSearch(e) {
-  const q = e.target.value.toLowerCase().trim();
+// Filtering
+function toggleFilter(diff) {
+  diffFilters[diff] = !diffFilters[diff];
+  const btn = document.querySelector('.btn-filter[data-diff="' + diff + '"]');
+  if (btn) btn.classList.toggle('active', diffFilters[diff]);
+  applyFilters();
+}
+
+function applyFilters() {
+  const q = document.getElementById('search').value.toLowerCase().trim();
   document.querySelectorAll('.problem').forEach(p => {
     const name = (p.getAttribute('data-name') || '').toLowerCase();
-    p.style.display = !q || name.includes(q) ? '' : 'none';
+    const diff = p.getAttribute('data-diff');
+    const matchesSearch = !q || name.includes(q);
+    const matchesDiff = diffFilters[diff];
+    p.style.display = (matchesSearch && matchesDiff) ? '' : 'none';
   });
-  // Auto-open categories with visible problems
-  if (q) {
+  // Auto-open categories with visible problems if searching or filtering
+  const isActiveFilter = !diffFilters.easy || !diffFilters.medium || !diffFilters.hard || q;
+  if (isActiveFilter) {
     document.querySelectorAll('.category').forEach(cat => {
       const visible = cat.querySelectorAll('.problem[style=""],.problem:not([style])');
       const hasMatch = Array.from(visible).some(p => p.style.display !== 'none');
       if (hasMatch) cat.classList.add('open'); else cat.classList.remove('open');
     });
   }
+}
+
+// Random Picker
+function pickRandom() {
+  const unsolved = [];
+  document.querySelectorAll('.problem:not(.solved)').forEach(p => {
+    if (p.style.display !== 'none') unsolved.push(p);
+  });
+  if (unsolved.length === 0) {
+    showToast('No unsolved problems visible!');
+    return;
+  }
+  const randomProb = unsolved[Math.floor(Math.random() * unsolved.length)];
+  const cat = randomProb.closest('.category');
+  if (cat && !cat.classList.contains('open')) cat.classList.add('open');
+  
+  randomProb.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  randomProb.classList.remove('highlight');
+  void randomProb.offsetWidth; // trigger reflow
+  randomProb.classList.add('highlight');
 }
 
 // Share via URL hash
